@@ -122,3 +122,11 @@ describe("batchStats", () => {
     expect(batchStats([]).average).toBeNull();
   });
 });
+
+describe("sample labeling", () => {
+  it("marks Product growth and Ops dashboard (and every sample) as illustrative", () => {
+    expect(productGrowth.illustrative).toBe(true);
+    expect(opsDashboard.illustrative).toBe(true);
+    expect(SAMPLES.every((s) => s.illustrative)).toBe(true);
+  });
+});

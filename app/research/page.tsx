@@ -224,9 +224,8 @@ export default function ResearchPage() {
         <div>
           <p className="font-serif text-[17px]">The score isn&apos;t validated yet.</p>
           <p className="mt-2 text-[13px] leading-relaxed text-muted">
-            The weights come from one study. A holdout check that derives weights from one group of participants and
-            tests them on the other is planned (scripts/backtest.ts). The score flags likely misreadings; it does not
-            predict them.
+            The weights come from one study and have not been tested on a separate group of participants. The score
+            flags likely misreadings; it does not predict them.
           </p>
         </div>
       </footer>
