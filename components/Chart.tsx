@@ -31,6 +31,8 @@ export interface ChartProps {
   callouts?: CheckId[];
   /** Thumbnail mode: no text, ticks, or tags. */
   mini?: boolean;
+  /** Override the viewBox size (used for the small before/after charts on Research). */
+  size?: [number, number];
   className?: string;
 }
 
@@ -156,7 +158,7 @@ function BarChart({ spec, callouts, ctx }: { spec: ChartSpec; callouts: CheckId[
   const showTags = !mini && callouts.length > 0;
   const legend = !mini && multi && spec.settings.showLegend;
   const m = mini
-    ? { top: 8, right: 8, bottom: 6, left: 8 }
+    ? { top: 12, right: 8, bottom: 6, left: 8 }
     : { top: (showTags ? TAG_ROW : 0) + 24, right: 24, bottom: legend ? 64 : 40, left: 52 };
 
   const all = spec.series.flatMap((s) => s.values);
@@ -211,6 +213,9 @@ function BarChart({ spec, callouts, ctx }: { spec: ChartSpec; callouts: CheckId[
                   <path d={barPath(bx, top, bw, h)} fill={color}>
                     <title>{`${c}${multi ? ` · ${s.name}` : ""}: ${fmt(v)}${spec.unit ?? ""}`}</title>
                   </path>
+                  {mini && spec.settings.directLabels && (
+                    <rect x={bx + bw / 2 - 7} y={top - 6} width={14} height={3} rx={1.5} fill={MUTED} />
+                  )}
                   {!mini && spec.settings.directLabels && (
                     <text
                       x={bx + bw / 2}
@@ -277,7 +282,7 @@ function Heatmap({ spec, callouts, ctx }: { spec: ChartSpec; callouts: CheckId[]
   const showTags = !mini && callouts.length > 0;
   const legend = spec.settings.showLegend && !mini;
   const m = mini
-    ? { top: 6, right: 6, bottom: 6, left: 6 }
+    ? { top: 6, right: 6, bottom: spec.settings.showLegend ? 20 : 6, left: 6 }
     : { top: (showTags ? TAG_ROW : 0) + 26, right: 12, bottom: legend ? 56 : 12, left: 64 };
 
   const all = spec.series.flatMap((s) => s.values);
@@ -335,6 +340,17 @@ function Heatmap({ spec, callouts, ctx }: { spec: ChartSpec; callouts: CheckId[]
                 >
                   <title>{`${s.name}, ${spec.categories[c]}: ${fmt(v)}${spec.unit ?? ""}`}</title>
                 </rect>
+                {mini && spec.settings.directLabels && (
+                  <rect
+                    x={m.left + c * cw + cw / 2 - 6}
+                    y={m.top + r * ch + ch / 2 - 1.5}
+                    width={12}
+                    height={3}
+                    rx={1.5}
+                    fill={dark ? "#fff" : INK}
+                    opacity={0.7}
+                  />
+                )}
                 {!mini && spec.settings.directLabels && (
                   <text
                     x={m.left + c * cw + cw / 2}
@@ -382,6 +398,17 @@ function Heatmap({ spec, callouts, ctx }: { spec: ChartSpec; callouts: CheckId[]
           strokeWidth={1.5}
         />
       )}
+      {mini && spec.settings.showLegend && (
+        <g>
+          <defs>
+            <linearGradient id={gradId}>
+              <stop offset="0%" stopColor={color(min)} />
+              <stop offset="100%" stopColor={color(max)} />
+            </linearGradient>
+          </defs>
+          <rect x={m.left} y={H - 12} width={W - m.left - m.right} height={6} rx={3} fill={`url(#${gradId})`} />
+        </g>
+      )}
       {legend && (
         <g aria-hidden="true" transform={`translate(${m.left},${H - 40})`}>
           <defs>
@@ -421,7 +448,12 @@ function LineChart({ spec, callouts, ctx }: { spec: ChartSpec; callouts: CheckId
   const direct = !mini && spec.settings.directLabels;
   const longest = Math.max(...spec.series.map((s) => s.name.length));
   const m = mini
-    ? { top: 10, right: 8, bottom: 10, left: 8 }
+    ? {
+        top: spec.settings.showLegend && spec.series.length > 1 ? 22 : 10,
+        right: spec.settings.directLabels ? 30 : 8,
+        bottom: 10,
+        left: 8,
+      }
     : {
         top: (showTags ? TAG_ROW : 0) + (legend ? 28 : 0) + 16,
         right: direct ? Math.min(200, 28 + longest * 7.5 + 40) : 24,
@@ -486,6 +518,23 @@ function LineChart({ spec, callouts, ctx }: { spec: ChartSpec; callouts: CheckId
           </g>
         );
       })}
+      {mini &&
+        spec.settings.directLabels &&
+        spreadLabels(ends, 8, m.top, H - m.bottom).map((l) => (
+          <g key={l.i}>
+            <rect x={W - m.right + 5} y={l.y - 1.5} width={6} height={3} rx={1.5} fill={seriesColor(l.i)} />
+            <rect x={W - m.right + 13} y={l.y - 1.5} width={12} height={3} rx={1.5} fill={MUTED} />
+          </g>
+        ))}
+      {mini &&
+        spec.settings.showLegend &&
+        spec.series.length > 1 &&
+        spec.series.map((_, i) => (
+          <g key={i}>
+            <rect x={m.left + i * 30} y={6} width={8} height={4} rx={2} fill={seriesColor(i)} />
+            <rect x={m.left + i * 30 + 11} y={6} width={14} height={4} rx={2} fill={GRID} />
+          </g>
+        ))}
       {direct &&
         labels.map((l) => (
           <text key={l.i} x={W - m.right + 10} y={l.y} dy="0.35em" fontFamily={FONT_SANS} fontSize={12} fontWeight={600} fill={INK}>
@@ -647,9 +696,9 @@ const SIZES: Record<ChartSpec["type"], [number, number]> = {
   multipanel: [720, 420],
 };
 
-export default function Chart({ spec, callouts = [], mini = false, className }: ChartProps) {
+export default function Chart({ spec, callouts = [], mini = false, size, className }: ChartProps) {
   const uid = useId().replace(/:/g, "");
-  const [W, H] = mini ? [160, 96] : SIZES[spec.type];
+  const [W, H] = mini ? [160, 96] : (size ?? SIZES[spec.type]);
   const ctx: Ctx = { W, H, mini, uid };
   const empty = spec.series.length === 0 || spec.categories.length === 0;
 
