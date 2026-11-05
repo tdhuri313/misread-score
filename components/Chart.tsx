@@ -1,7 +1,7 @@
 "use client";
 
 import { scaleBand, scaleLinear, scalePoint } from "d3-scale";
-import { useId, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { ChartSpec } from "@/lib/chartSpec";
 import type { CheckId } from "@/lib/checks";
 import { describeChart } from "@/lib/describe";
@@ -40,7 +40,7 @@ const FONT_MONO = "var(--font-mono), ui-monospace, monospace";
 const FONT_SANS = "var(--font-sans), system-ui, sans-serif";
 const TAG_FONT = 11;
 const TAG_H = 22;
-const TAG_ROW = 34; // band reserved for callout tags
+const TAG_INSET = 80; // tags may use the chart width minus this
 
 interface Ctx {
   W: number;
@@ -61,24 +61,63 @@ function tagWidth(text: string): number {
   return Math.ceil(text.length * TAG_FONT * 0.62 + 16);
 }
 
-/** Lay tags left-to-right from x, shifting the last ones left so none passes maxX. */
-function layoutTags(tags: TagSpec[], x: number, maxX: number): { tag: TagSpec; x: number; w: number }[] {
-  const out: { tag: TagSpec; x: number; w: number }[] = [];
-  let cx = x;
+/** Lay tags left-to-right in rows no wider than `avail`; wrap instead of overlapping. */
+function layoutTags(tags: TagSpec[], avail: number): { tag: TagSpec; x: number; y: number; w: number }[] {
+  const out: { tag: TagSpec; x: number; y: number; w: number }[] = [];
+  let cx = 0;
+  let row = 0;
   for (const tag of tags) {
-    const w = Math.min(tagWidth(tag.text), maxX - x);
-    const tx = cx + w > maxX ? Math.max(x, maxX - w) : cx;
-    out.push({ tag, x: tx, w });
-    cx = tx + w + 8;
+    const w = Math.min(tagWidth(tag.text), avail);
+    if (cx > 0 && cx + w > avail) {
+      row += 1;
+      cx = 0;
+    }
+    out.push({ tag, x: cx, y: row * (TAG_H + 6), w });
+    cx += w + 8;
   }
   return out;
 }
 
-function TagRow({ tags, x, y, maxX }: { tags: TagSpec[]; x: number; y: number; maxX: number }) {
+/** Height reserved above the plot for the tags (0 when there are none). */
+function tagBand(tags: TagSpec[], avail: number): number {
+  if (tags.length === 0) return 0;
+  const rows = Math.max(...layoutTags(tags, avail).map((t) => t.y)) / (TAG_H + 6) + 1;
+  return rows * (TAG_H + 6) + 6;
+}
+
+/** Callout tags for the issues being highlighted. Depends only on the spec. */
+function tagsFor(spec: ChartSpec, callouts: CheckId[]): TagSpec[] {
+  const t: TagSpec[] = [];
+  const st = spec.settings;
+  const has = (id: CheckId) => callouts.includes(id);
+  if (spec.type === "bar") {
+    if (has("truncated") && st.axisStart !== 0) t.push({ text: `Axis starts at ${fmt(st.axisStart)}`, tone: "red" });
+    if (has("indirect") && !st.directLabels) t.push({ text: "No value labels", tone: "amber" });
+  } else if (spec.type === "heatmap") {
+    if (has("color")) {
+      if (!st.showLegend) t.push({ text: "No color scale", tone: "red" });
+      if (st.colorMapping === "reversed") t.push({ text: "Lighter = more (reversed)", tone: "amber" });
+    }
+    if (has("indirect") && !st.directLabels) t.push({ text: "No cell values", tone: "amber" });
+  } else if (spec.type === "line") {
+    if (has("indirect") && !st.directLabels) {
+      t.push({ text: st.showLegend ? "Legend lookup" : "Unlabeled lines", tone: "amber" });
+    }
+  } else {
+    const primary = st.panels.some((p) => p.primary);
+    if (has("dense")) {
+      t.push({ text: primary ? `${st.panels.length} panels` : `${st.panels.length} equal panels`, tone: primary ? "amber" : "red" });
+    }
+    if (has("indirect") && !st.directLabels) t.push({ text: "No line labels", tone: "amber" });
+  }
+  return t;
+}
+
+function TagRow({ tags, x, y, avail }: { tags: TagSpec[]; x: number; y: number; avail: number }) {
   return (
     <g>
-      {layoutTags(tags, x, maxX).map(({ tag: t, x: tx, w }) => (
-        <g key={t.text} transform={`translate(${tx},${y})`}>
+      {layoutTags(tags, avail).map(({ tag: t, x: tx, y: ty, w }) => (
+        <g key={t.text} transform={`translate(${x + tx},${y + ty})`}>
           <rect width={w} height={TAG_H} rx={4} fill={t.tone === "red" ? RISK.high : "#B97A12"} />
           <text
             x={w / 2}
@@ -156,10 +195,12 @@ function BarChart({ spec, callouts, ctx }: { spec: ChartSpec; callouts: CheckId[
   const start = spec.settings.axisStart;
   const multi = spec.series.length > 1;
   const showTags = !mini && callouts.length > 0;
+  const tags = tagsFor(spec, callouts);
+  const band = showTags ? tagBand(tags, W - TAG_INSET) : 0;
   const legend = !mini && multi && spec.settings.showLegend;
   const m = mini
     ? { top: 12, right: 8, bottom: 6, left: 8 }
-    : { top: (showTags ? TAG_ROW : 0) + 24, right: 24, bottom: legend ? 64 : 40, left: 52 };
+    : { top: band + 24, right: 24, bottom: legend ? 64 : 40, left: 52 };
 
   const all = spec.series.flatMap((s) => s.values);
   const max = Math.max(...all, start + 1);
@@ -179,10 +220,6 @@ function BarChart({ spec, callouts, ctx }: { spec: ChartSpec; callouts: CheckId[
 
   const truncated = callouts.includes("truncated") && start !== 0;
   const unlabeled = callouts.includes("indirect") && !spec.settings.directLabels;
-  const tags: TagSpec[] = [];
-  if (truncated) tags.push({ text: `Axis starts at ${fmt(start)}`, tone: "red" });
-  if (unlabeled) tags.push({ text: "No value labels", tone: "amber" });
-
   const plotTop = m.top;
   const base = y(start);
 
@@ -269,7 +306,7 @@ function BarChart({ spec, callouts, ctx }: { spec: ChartSpec; callouts: CheckId[
           rx={4}
         />
       )}
-      {showTags && <TagRow tags={tags} x={m.left} y={6} maxX={W - m.right} />}
+      {showTags && <TagRow tags={tags} x={m.left} y={6} avail={W - TAG_INSET} />}
       {legend && <SeriesLegend spec={spec} x={m.left} y={H - 18} />}
     </g>
   );
@@ -280,10 +317,12 @@ function BarChart({ spec, callouts, ctx }: { spec: ChartSpec; callouts: CheckId[
 function Heatmap({ spec, callouts, ctx }: { spec: ChartSpec; callouts: CheckId[]; ctx: Ctx }) {
   const { W, H, mini, uid } = ctx;
   const showTags = !mini && callouts.length > 0;
+  const tags = tagsFor(spec, callouts);
+  const band = showTags ? tagBand(tags, W - TAG_INSET) : 0;
   const legend = spec.settings.showLegend && !mini;
   const m = mini
     ? { top: 6, right: 6, bottom: spec.settings.showLegend ? 20 : 6, left: 6 }
-    : { top: (showTags ? TAG_ROW : 0) + 26, right: 12, bottom: legend ? 56 : 12, left: 64 };
+    : { top: band + 26, right: 12, bottom: legend ? 56 : 12, left: 64 };
 
   const all = spec.series.flatMap((s) => s.values);
   const min = Math.min(...all);
@@ -297,13 +336,6 @@ function Heatmap({ spec, callouts, ctx }: { spec: ChartSpec; callouts: CheckId[]
   const rows = spec.series.length;
   const cw = (W - m.left - m.right) / cols;
   const ch = (H - m.top - m.bottom) / rows;
-
-  const tags: TagSpec[] = [];
-  if (callouts.includes("color")) {
-    if (!spec.settings.showLegend) tags.push({ text: "No color scale", tone: "red" });
-    if (reversed) tags.push({ text: "Lighter = more (reversed)", tone: "amber" });
-  }
-  if (callouts.includes("indirect") && !spec.settings.directLabels) tags.push({ text: "No cell values", tone: "amber" });
 
   const gradId = `${uid}-grad`;
   const legendW = Math.min(240, W - m.left - m.right);
@@ -430,7 +462,7 @@ function Heatmap({ spec, callouts, ctx }: { spec: ChartSpec; callouts: CheckId[]
           </text>
         </g>
       )}
-      {showTags && <TagRow tags={tags} x={m.left} y={4} maxX={W - m.right} />}
+      {showTags && <TagRow tags={tags} x={m.left} y={4} avail={W - TAG_INSET} />}
     </g>
   );
 }
@@ -444,6 +476,8 @@ function linePath(points: [number, number][]): string {
 function LineChart({ spec, callouts, ctx }: { spec: ChartSpec; callouts: CheckId[]; ctx: Ctx }) {
   const { W, H, mini } = ctx;
   const showTags = !mini && callouts.length > 0;
+  const tags = tagsFor(spec, callouts);
+  const band = showTags ? tagBand(tags, W - TAG_INSET) : 0;
   const legend = !mini && spec.settings.showLegend && spec.series.length > 1;
   const direct = !mini && spec.settings.directLabels;
   const longest = Math.max(...spec.series.map((s) => s.name.length));
@@ -455,8 +489,8 @@ function LineChart({ spec, callouts, ctx }: { spec: ChartSpec; callouts: CheckId
         left: 8,
       }
     : {
-        top: (showTags ? TAG_ROW : 0) + (legend ? 28 : 0) + 16,
-        right: direct ? Math.min(200, 28 + longest * 7.5 + 40) : 24,
+        top: band + (legend ? 28 : 0) + 16,
+        right: direct ? Math.min(200, W * 0.32, 28 + longest * 7.5 + 40) : 24,
         bottom: 36,
         left: 48,
       };
@@ -475,11 +509,6 @@ function LineChart({ spec, callouts, ctx }: { spec: ChartSpec; callouts: CheckId
     return { i, name: s.name, value: last, y: y(last) };
   });
   const labels = spreadLabels(ends, 16, m.top, H - m.bottom);
-
-  const tags: TagSpec[] = [];
-  if (callouts.includes("indirect") && !spec.settings.directLabels) {
-    tags.push({ text: spec.settings.showLegend ? "Legend lookup" : "Unlabeled lines", tone: "amber" });
-  }
 
   return (
     <g>
@@ -547,12 +576,12 @@ function LineChart({ spec, callouts, ctx }: { spec: ChartSpec; callouts: CheckId
         ))}
       {legend && (
         <>
-          <SeriesLegend spec={spec} x={m.left} y={(showTags ? TAG_ROW : 0) + 12} />
+          <SeriesLegend spec={spec} x={m.left} y={band + 12} />
           {tags.length > 0 && (
             <rect
               aria-hidden="true"
               x={m.left - 6}
-              y={(showTags ? TAG_ROW : 0)}
+              y={band}
               width={legendLayout(spec).width + 4}
               height={24}
               rx={4}
@@ -563,7 +592,7 @@ function LineChart({ spec, callouts, ctx }: { spec: ChartSpec; callouts: CheckId
           )}
         </>
       )}
-      {showTags && <TagRow tags={tags} x={m.left} y={4} maxX={W - 8} />}
+      {showTags && <TagRow tags={tags} x={m.left} y={4} avail={W - TAG_INSET} />}
     </g>
   );
 }
@@ -593,10 +622,12 @@ function MultiPanel({ spec, callouts, ctx }: { spec: ChartSpec; callouts: CheckI
   const { W, H, mini } = ctx;
   const panels = spec.settings.panels;
   const showTags = !mini && callouts.length > 0;
+  const tags = tagsFor(spec, callouts);
+  const band = showTags ? tagBand(tags, W - TAG_INSET) : 0;
   const gap = mini ? 4 : 12;
   const area: Rect = mini
     ? { x: 4, y: 4, w: W - 8, h: H - 8 }
-    : { x: 2, y: (showTags ? TAG_ROW : 0) + 2, w: W - 4, h: H - (showTags ? TAG_ROW : 0) - 4 };
+    : { x: 2, y: band + 2, w: W - 4, h: H - band - 4 };
   const primaryIndex = panels.findIndex((p) => p.primary);
 
   let rects: Rect[];
@@ -617,15 +648,6 @@ function MultiPanel({ spec, callouts, ctx }: { spec: ChartSpec; callouts: CheckI
     });
   }
 
-  const tags: TagSpec[] = [];
-  if (callouts.includes("dense")) {
-    tags.push({
-      text: primaryIndex === -1 ? `${panels.length} equal panels` : `${panels.length} panels`,
-      tone: primaryIndex === -1 ? "red" : "amber",
-    });
-  }
-  if (callouts.includes("indirect") && !spec.settings.directLabels) tags.push({ text: "No line labels", tone: "amber" });
-
   return (
     <g>
       {panels.map((p, i) => {
@@ -640,7 +662,7 @@ function MultiPanel({ spec, callouts, ctx }: { spec: ChartSpec; callouts: CheckI
           x: r.x + pad,
           y: r.y + (showText ? 28 : pad),
           w: r.w - pad * 2 - labelW,
-          h: r.h - (showText ? 28 : pad) - pad,
+          h: r.h - (showText ? 28 : pad) - pad - (showText && isPrimary ? 18 : 0),
         };
         const ys = scaleLinear()
           .domain([Math.min(...s.values), Math.max(...s.values)])
@@ -671,10 +693,10 @@ function MultiPanel({ spec, callouts, ctx }: { spec: ChartSpec; callouts: CheckI
             )}
             {showText && isPrimary && (
               <>
-                <text x={inner.x} y={inner.y + inner.h + 2} dy="-0.3em" fontFamily={FONT_MONO} fontSize={10} fill={MUTED}>
+                <text x={inner.x} y={inner.y + inner.h + 14} fontFamily={FONT_MONO} fontSize={10} fill={MUTED}>
                   {spec.categories[0]}
                 </text>
-                <text x={inner.x + inner.w} y={inner.y + inner.h + 2} dy="-0.3em" textAnchor="end" fontFamily={FONT_MONO} fontSize={10} fill={MUTED}>
+                <text x={inner.x + inner.w} y={inner.y + inner.h + 14} textAnchor="end" fontFamily={FONT_MONO} fontSize={10} fill={MUTED}>
                   {spec.categories[spec.categories.length - 1]}
                 </text>
               </>
@@ -682,7 +704,7 @@ function MultiPanel({ spec, callouts, ctx }: { spec: ChartSpec; callouts: CheckI
           </g>
         );
       })}
-      {showTags && <TagRow tags={tags} x={4} y={4} maxX={W - 4} />}
+      {showTags && <TagRow tags={tags} x={4} y={4} avail={W - TAG_INSET} />}
     </g>
   );
 }
@@ -696,9 +718,32 @@ const SIZES: Record<ChartSpec["type"], [number, number]> = {
   multipanel: [720, 420],
 };
 
+/**
+ * Measure the rendered width so the chart re-lays out at its real size: text stays
+ * legible on phones instead of shrinking with the whole SVG.
+ */
+function useWidth(enabled: boolean) {
+  const [width, setWidth] = useState<number | null>(null);
+  const ref = useRef<SVGSVGElement | null>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!enabled || !el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(([entry]) => setWidth(Math.round(entry.contentRect.width)));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [enabled]);
+  return { ref, width };
+}
+
 export default function Chart({ spec, callouts = [], mini = false, size, className }: ChartProps) {
   const uid = useId().replace(/:/g, "");
-  const [W, H] = mini ? [160, 96] : (size ?? SIZES[spec.type]);
+  const { ref, width } = useWidth(!mini && !size);
+  let [W, H] = mini ? [160, 96] : (size ?? SIZES[spec.type]);
+  if (!mini && !size && width && width < W) {
+    // Narrow container: use the real width and a shorter height.
+    H = Math.round(Math.max(260, Math.min(H, width * 0.85)));
+    W = Math.max(280, width);
+  }
   const ctx: Ctx = { W, H, mini, uid };
   const empty = spec.series.length === 0 || spec.categories.length === 0;
 
@@ -720,11 +765,11 @@ export default function Chart({ spec, callouts = [], mini = false, size, classNa
 
   return (
     <svg
+      ref={ref}
       viewBox={`0 0 ${W} ${H}`}
       className={className}
       role="img"
       aria-labelledby={`${uid}-t ${uid}-d`}
-      style={{ overflow: "visible" }}
     >
       <title id={`${uid}-t`}>{spec.title}</title>
       <desc id={`${uid}-d`}>{describeChart(spec)}</desc>

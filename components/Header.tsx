@@ -26,12 +26,13 @@ export default function Header() {
   const pathname = usePathname();
   return (
     <header className="sticky top-0 z-30 border-b border-line bg-surface/95 backdrop-blur">
-      <div className="mx-auto grid h-[72px] grid-cols-[1fr_auto_1fr] items-center gap-4 px-4 sm:px-8">
+      <div className="mx-auto grid h-[72px] grid-cols-[auto_1fr] sm:grid-cols-[1fr_auto_1fr] items-center gap-4 px-4 sm:px-8">
         <Link href="/" className="flex items-center gap-3 justify-self-start rounded">
           <Logo />
-          <span className="text-lg font-semibold tracking-tight">Misread Score</span>
+          <span className="hidden whitespace-nowrap text-lg font-semibold tracking-tight sm:inline">Misread Score</span>
+          <span className="sr-only sm:hidden">Misread Score</span>
         </Link>
-        <nav aria-label="Main" className="flex items-stretch gap-1 self-stretch sm:gap-6">
+        <nav aria-label="Main" className="flex items-stretch justify-end gap-1 self-stretch sm:justify-center sm:gap-6">
           {NAV.map((item) => {
             const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
             return (

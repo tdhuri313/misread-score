@@ -17,7 +17,7 @@ import {
 } from "@/lib/edit";
 
 const cellInput =
-  "w-full min-w-0 rounded border border-transparent bg-transparent px-1 py-1 font-mono text-xs hover:border-line focus:border-primary focus:bg-surface";
+  "min-w-0 rounded border border-transparent bg-transparent px-1 py-1 font-mono text-xs hover:border-line focus:border-primary focus:bg-surface";
 
 /** Editable data table and settings. Every change re-scores and re-renders live. */
 export default function DataEditor() {
@@ -37,83 +37,13 @@ export default function DataEditor() {
             <span className="rounded bg-medium-tint px-1.5 py-0.5 text-[10px] font-medium text-medium-ink">Illustrative</span>
           )}
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <caption className="sr-only">Editable data for {spec.name}</caption>
-            <thead>
-              <tr className="border-b border-line text-muted">
-                <th scope="col" className="py-2 pr-1 text-left font-normal">
-                  <span className="sr-only">Category</span>
-                </th>
-                {spec.series.map((s, si) => (
-                  <th key={si} scope="col" className="px-0.5 py-1 font-normal">
-                    <div className="flex items-center">
-                      <input
-                        aria-label={`Series ${si + 1} name`}
-                        value={s.name}
-                        onChange={(e) => change(renameSeries(spec, si, e.target.value))}
-                        className={`${cellInput} text-right font-sans text-muted`}
-                      />
-                      {spec.series.length > 1 && (
-                        <button
-                          type="button"
-                          aria-label={`Remove series ${s.name}`}
-                          onClick={() => change(removeSeries(spec, si))}
-                          className="px-0.5 text-faint hover:text-high"
-                        >
-                          ×
-                        </button>
-                      )}
-                    </div>
-                  </th>
-                ))}
-                <td className="w-5" />
-              </tr>
-            </thead>
-            <tbody>
-              {spec.categories.map((c, ri) => (
-                <tr key={ri} className="border-b border-line">
-                  <th scope="row" className="py-0.5 pr-1 text-left font-normal">
-                    <input
-                      aria-label={`Row ${ri + 1} category`}
-                      value={c}
-                      onChange={(e) => change(setCategory(spec, ri, e.target.value))}
-                      className={`${cellInput} font-semibold`}
-                    />
-                  </th>
-                  {spec.series.map((s, si) => (
-                    <td key={si} className="px-0.5 py-0.5">
-                      <NumberInput
-                        label={`${s.name}, ${c}`}
-                        value={s.values[ri]}
-                        onCommit={(n) => change(setValue(spec, si, ri, n))}
-                        className={`${cellInput} text-right`}
-                      />
-                    </td>
-                  ))}
-                  <td className="text-center">
-                    {spec.categories.length > 1 && (
-                      <button
-                        type="button"
-                        aria-label={`Remove row ${c}`}
-                        onClick={() => change(removeRow(spec, ri))}
-                        className="px-1 text-faint hover:text-high"
-                      >
-                        ×
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DataTable spec={spec} change={change} />
         <div className="mt-2 flex gap-3 text-xs">
           <button type="button" onClick={() => change(addRow(spec))} className="font-medium text-primary hover:underline">
-            + Row
+            {spec.type === "heatmap" ? "+ Column" : "+ Row"}
           </button>
           <button type="button" onClick={() => change(addSeries(spec))} className="font-medium text-primary hover:underline">
-            + Series
+            {spec.type === "heatmap" ? "+ Row" : "+ Series"}
           </button>
         </div>
       </section>
@@ -253,5 +183,98 @@ function NumberInput({
       aria-invalid={draft !== null && (draft.trim() === "" || !Number.isFinite(Number(draft))) ? true : undefined}
       className={className}
     />
+  );
+}
+
+interface Axis {
+  name: string;
+  label: string;
+  rename: (name: string) => void;
+  remove?: () => void;
+}
+
+/**
+ * Editable data grid. Bars and lines put categories in rows and series in columns;
+ * heatmaps are transposed so the table reads like the chart (series as rows).
+ */
+function DataTable({ spec, change }: { spec: ChartSpec; change: (s: ChartSpec) => void }) {
+  const cats: Axis[] = spec.categories.map((c, i) => ({
+    name: c,
+    label: `Category ${i + 1}`,
+    rename: (n) => change(setCategory(spec, i, n)),
+    remove: spec.categories.length > 1 ? () => change(removeRow(spec, i)) : undefined,
+  }));
+  const series: Axis[] = spec.series.map((s, i) => ({
+    name: s.name,
+    label: `Series ${i + 1}`,
+    rename: (n) => change(renameSeries(spec, i, n)),
+    remove: spec.series.length > 1 ? () => change(removeSeries(spec, i)) : undefined,
+  }));
+  const transposed = spec.type === "heatmap";
+  const rows = transposed ? series : cats;
+  const cols = transposed ? cats : series;
+  const cell = (r: number, c: number) => (transposed ? { si: r, ci: c } : { si: c, ci: r });
+
+  const removeBtn = (a: Axis) =>
+    a.remove && (
+      <button type="button" aria-label={`Remove ${a.name}`} onClick={a.remove} className="px-0.5 text-faint hover:text-high">
+        ×
+      </button>
+    );
+
+  return (
+    <div className="-mx-1 overflow-x-auto px-1">
+      <table className="w-full text-xs">
+        <caption className="sr-only">Editable data for {spec.name}</caption>
+        <thead>
+          <tr className="border-b border-line text-muted">
+            <td className="min-w-14" />
+            {cols.map((a, i) => (
+              <th key={i} scope="col" className="px-0.5 py-1 font-normal">
+                <div className="flex min-w-11 items-center">
+                  <input
+                    aria-label={`${a.label} name`}
+                    value={a.name}
+                    onChange={(e) => a.rename(e.target.value)}
+                    className={`${cellInput} w-full text-right font-sans text-muted`}
+                  />
+                  {removeBtn(a)}
+                </div>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, ri) => (
+            <tr key={ri} className="border-b border-line">
+              <th scope="row" className="min-w-14 py-0.5 pr-1 text-left font-normal">
+                <div className="flex items-center">
+                  <input
+                    aria-label={`${r.label} name`}
+                    value={r.name}
+                    onChange={(e) => r.rename(e.target.value)}
+                    className={`${cellInput} w-12 font-semibold`}
+                  />
+                  {removeBtn(r)}
+                </div>
+              </th>
+              {cols.map((c, ci) => {
+                const { si, ci: k } = cell(ri, ci);
+                return (
+                  <td key={ci} className="px-0.5 py-0.5">
+                    <NumberInput
+                      label={`${spec.series[si].name}, ${spec.categories[k]}`}
+                      value={spec.series[si].values[k]}
+                      onCommit={(n) => change(setValue(spec, si, k, n))}
+                      className={`${cellInput} w-full min-w-11 text-right`}
+                    />
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
