@@ -1,5 +1,7 @@
 # Misread Score
 
+**[Try the live demo →](https://misread-score.vercel.app/)**
+
 A web app that flags how formatting can make an accurate chart misleading. You give it a chart (sample, JSON spec, or CSV), and it scores the **misread risk** from 0 to 100 (higher is worse), explains each issue, says what a viewer is likely to take away compared with what the data supports, and suggests fixes.
 
 > **The score is not validated yet.** It flags *likely* misreadings based on one study; it does not predict how any particular viewer will read a chart.
